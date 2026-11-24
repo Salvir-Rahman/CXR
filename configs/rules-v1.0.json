@@ -1,0 +1,128 @@
+{
+  "rules": [
+    {
+      "rule_id": "R1.1",
+      "source_guideline": "ACR Appropriateness Criteria: Congestive Heart Failure",
+      "guideline_quote": "In cardiogenic pulmonary edema, elevated left ventricular end-diastolic pressure leads to pulmonary vascular redistribution, interstitial/alveolar edema, and frequently secondary pleural effusions.",
+      "formal_clause": {
+        "antecedents": [
+          {
+            "finding": "Cardiomegaly",
+            "state": "present"
+          },
+          {
+            "finding": "Edema",
+            "state": "present"
+          }
+        ],
+        "consequent": {
+          "finding": "Effusion",
+          "state": "present"
+        }
+      },
+      "date_introduced": "2026-11-24"
+    },
+    {
+      "rule_id": "R1.2",
+      "source_guideline": "Fleischner Society: Glossary of Terms for Thoracic Imaging",
+      "guideline_quote": "Airspace consolidation represents dense opacification of the pulmonary parenchyma and is almost universally accompanied by contiguous airspace infiltration.",
+      "formal_clause": {
+        "antecedents": [
+          {
+            "finding": "Consolidation",
+            "state": "present"
+          }
+        ],
+        "consequent": {
+          "finding": "Infiltration",
+          "state": "present"
+        }
+      },
+      "date_introduced": "2026-11-24"
+    },
+    {
+      "rule_id": "R1.3",
+      "source_guideline": "ATS/ERS International Multidisciplinary Consensus on Idiopathic Pulmonary Fibrosis",
+      "guideline_quote": "End-stage pulmonary fibrosis induces parenchymal volume loss, traction bronchiectasis, and reactive apical/subpleural pleural thickening.",
+      "formal_clause": {
+        "antecedents": [
+          {
+            "finding": "Fibrosis",
+            "state": "present"
+          }
+        ],
+        "consequent": {
+          "finding": "Pleural_Thickening",
+          "state": "present"
+        }
+      },
+      "date_introduced": "2026-11-24"
+    },
+    {
+      "rule_id": "R2.1",
+      "source_guideline": "ATS/IDSA Guidelines on the Management of Community-Acquired Pneumonia",
+      "guideline_quote": "The radiographic hallmark of bacterial pneumonia is lobar or segmental consolidation co-occurring with inflammatory infiltration.",
+      "formal_clause": {
+        "antecedents": [
+          {
+            "finding": "Consolidation",
+            "state": "present"
+          },
+          {
+            "finding": "Infiltration",
+            "state": "present"
+          }
+        ],
+        "consequent": {
+          "finding": "Pneumonia",
+          "state": "present"
+        }
+      },
+      "date_introduced": "2026-11-24"
+    },
+    {
+      "rule_id": "R2.2",
+      "source_guideline": "ACC/AHA Guidelines for the Management of Heart Failure",
+      "guideline_quote": "Decompensated biventricular failure with pronounced cardiomegaly and pleural effusion carries a high likelihood of concurrent alveolar pulmonary edema.",
+      "formal_clause": {
+        "antecedents": [
+          {
+            "finding": "Cardiomegaly",
+            "state": "present"
+          },
+          {
+            "finding": "Effusion",
+            "state": "present"
+          }
+        ],
+        "consequent": {
+          "finding": "Edema",
+          "state": "present"
+        }
+      },
+      "date_introduced": "2026-11-24"
+    },
+    {
+      "rule_id": "R2.3",
+      "source_guideline": "British Thoracic Society (BTS) Pleural Disease Guidelines",
+      "guideline_quote": "In secondary spontaneous pneumothorax complicating chronic obstructive pulmonary disease/emphysema, air entry into the pleural space results in compressive atelectasis of the underlying lung.",
+      "formal_clause": {
+        "antecedents": [
+          {
+            "finding": "Emphysema",
+            "state": "present"
+          },
+          {
+            "finding": "Pneumothorax",
+            "state": "present"
+          }
+        ],
+        "consequent": {
+          "finding": "Atelectasis",
+          "state": "present"
+        }
+      },
+      "date_introduced": "2026-11-24"
+    }
+  ]
+}
