@@ -218,3 +218,65 @@ def test_compute_normalized_entropy() -> None:
     # 5. Invalid shape raises ValueError
     with pytest.raises(ValueError, match="Expected last dimension to be 3"):
         compute_normalized_entropy(np.ones((2, 4)))
+
+
+def test_ordinal_severity_semantics() -> None:
+    """Verify ordinal severity semantics in Horn clause evaluation."""
+    config = load_config()
+    rules_path = config.paths.root_dir / "configs" / "rules-v1.0.json"
+    rules, _ = load_rule_registry(rules_path, NIH_CHESTXRAY14_LABELS)
+
+    # 1. Consolidation=present + Infiltration=severe marks R1.2 as supporting (NOT violated)
+    findings_sup = {label: "absent" for label in NIH_CHESTXRAY14_LABELS}
+    findings_sup["Consolidation"] = "present"
+    findings_sup["Infiltration"] = "severe"
+    res_sup = evaluate_rules(findings_sup, rules)
+    assert "R1.2" in res_sup.supporting_rule_ids
+    assert "R1.2" not in res_sup.violated_rule_ids
+
+    # 2. Consolidation=severe + Infiltration=absent marks R1.2 as violated
+    # (because severe triggers a 'present' antecedent)
+    findings_viol = {label: "absent" for label in NIH_CHESTXRAY14_LABELS}
+    findings_viol["Consolidation"] = "severe"
+    findings_viol["Infiltration"] = "absent"
+    res_viol = evaluate_rules(findings_viol, rules)
+    assert "R1.2" in res_viol.violated_rule_ids
+    assert "R1.2" not in res_viol.supporting_rule_ids
+
+    # 3. Rule requiring 'severe' is NOT satisfied by 'present'
+    severe_rule = SymbolicRule(
+        rule_id="R9.1",
+        source_guideline="Test Guideline",
+        guideline_quote="Test Quote",
+        formal_clause=FormalClause(
+            antecedents=(ClauseAtom(finding="Effusion", state="present"),),
+            consequent=ClauseAtom(finding="Edema", state="severe"),
+        ),
+        date_introduced="2026-11-24",
+    )
+    res_not_severe = evaluate_rules(
+        {"Effusion": "present", "Edema": "present"}, (severe_rule,)
+    )
+    assert "R9.1" in res_not_severe.violated_rule_ids
+
+    # 4. Rule requiring 'absent' is satisfied ONLY by 'absent'
+    absent_rule = SymbolicRule(
+        rule_id="R9.2",
+        source_guideline="Test Guideline",
+        guideline_quote="Test Quote",
+        formal_clause=FormalClause(
+            antecedents=(ClauseAtom(finding="Pneumothorax", state="absent"),),
+            consequent=ClauseAtom(finding="Atelectasis", state="absent"),
+        ),
+        date_introduced="2026-11-24",
+    )
+    res_absent_ok = evaluate_rules(
+        {"Pneumothorax": "absent", "Atelectasis": "absent"}, (absent_rule,)
+    )
+    assert "R9.2" in res_absent_ok.supporting_rule_ids
+
+    res_absent_fail = evaluate_rules(
+        {"Pneumothorax": "absent", "Atelectasis": "present"}, (absent_rule,)
+    )
+    assert "R9.2" in res_absent_fail.violated_rule_ids
+

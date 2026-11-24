@@ -184,6 +184,19 @@ def load_rule_registry(
     return tuple(parsed_rules), sha256_hash
 
 
+def _atom_satisfied(observed_state: str, required_state: str) -> bool:
+    """Evaluate whether an observed finding state satisfies a clause atom requirement.
+
+    Ordinal severity semantics:
+        - required == 'present': satisfied by either 'present' or 'severe' (severity escalation).
+        - required == 'absent': satisfied strictly by 'absent'.
+        - required == 'severe': satisfied strictly by 'severe'.
+    """
+    if required_state == "present":
+        return observed_state in {"present", "severe"}
+    return observed_state == required_state
+
+
 def evaluate_rules(
     discretized_findings: dict[str, str], rules: tuple[SymbolicRule, ...]
 ) -> RuleEvaluationResult:
@@ -212,7 +225,7 @@ def evaluate_rules(
         antecedents_match = True
         for atom in clause.antecedents:
             observed_state = discretized_findings.get(atom.finding, "absent").lower()
-            if observed_state != atom.state:
+            if not _atom_satisfied(observed_state, atom.state):
                 antecedents_match = False
                 break
 
@@ -226,7 +239,7 @@ def evaluate_rules(
             consequent.finding, "absent"
         ).lower()
 
-        if observed_consequent_state == consequent.state:
+        if _atom_satisfied(observed_consequent_state, consequent.state):
             supporting.append(rule.rule_id)
         else:
             violated.append(rule.rule_id)
