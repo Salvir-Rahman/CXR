@@ -110,3 +110,12 @@ def test_predict_custom_tau_escalation(
     if data["study_abnormality_score"] > 0.0:
         assert data["decision"] == "esc"
         assert len(data["escalation_reasons"]) > 0
+
+
+def test_frontend_root_served(api_client: TestClient) -> None:
+    """Verify GET / serves frontend index.html with Neuro-Symbolic dashboard."""
+    response = api_client.get("/")
+    assert response.status_code == 200
+    assert "Neuro-Symbolic" in response.text
+    assert "Research prototype only" in response.text
+

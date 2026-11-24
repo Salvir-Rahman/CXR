@@ -18,6 +18,8 @@ import numpy as np
 import torch
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
@@ -263,6 +265,24 @@ def create_app(
         checkpoint_path=checkpoint_path,
         calibrator_path=calibrator_path,
     )
+
+    # Mount static assets and serve single-page frontend if available
+    frontend_dir = Path("frontend")
+    if not frontend_dir.exists():
+        cxr_frontend = Path("C:/CXR/frontend")
+        if cxr_frontend.exists():
+            frontend_dir = cxr_frontend
+
+    if frontend_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
+
+        @app.get("/", include_in_schema=False)
+        def read_root() -> FileResponse:
+            """Serve the single-page clinical triage frontend."""
+            index_path = frontend_dir / "index.html"
+            if not index_path.exists():
+                raise HTTPException(status_code=404, detail="Frontend index.html not found.")
+            return FileResponse(index_path)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
