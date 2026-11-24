@@ -5,6 +5,7 @@ project:
 
 paths:
   raw_data_dir: "data/raw"
+  nih_dir: "data/raw/nih"
   processed_data_dir: "data/processed"
   artifacts_dir: "artifacts"
   models_dir: "artifacts/models"
@@ -13,6 +14,12 @@ paths:
 reproducibility:
   seed: 42
   deterministic: true
+
+data:
+  splits:
+    train: 0.70
+    val: 0.15
+    test: 0.15
 
 ontology:
   dataset_name: "NIH-ChestXray14"
@@ -52,11 +59,16 @@ study_parameters:
     - 0.8
 
 model:
-  backbone: "densenet121"
+  backbone: "mobilevit_xxs"
   pretrained: true
   image_size: 224
-  in_channels: 1
+  in_channels: 3
   num_classes: 14
+
+distillation:
+  teacher: "BiomedCLIP"
+  lambda_s: 0.5
+  lambda_d: 0.3
 
 calibration:
   method: "temperature_scaling"
