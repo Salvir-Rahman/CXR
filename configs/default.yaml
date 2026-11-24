@@ -1,0 +1,73 @@
+project:
+  name: "neuro-symbolic-cxr-triage"
+  version: "0.1.0"
+  description: "Neuro-Symbolic Chest X-Ray Triage System with Selective Classification"
+
+paths:
+  raw_data_dir: "data/raw"
+  processed_data_dir: "data/processed"
+  artifacts_dir: "artifacts"
+  models_dir: "artifacts/models"
+  eval_dir: "artifacts/evaluation"
+
+reproducibility:
+  seed: 42
+  deterministic: true
+
+ontology:
+  dataset_name: "NIH-ChestXray14"
+  labels:
+    - "Atelectasis"
+    - "Cardiomegaly"
+    - "Effusion"
+    - "Infiltration"
+    - "Mass"
+    - "Nodule"
+    - "Pneumonia"
+    - "Pneumothorax"
+    - "Consolidation"
+    - "Edema"
+    - "Emphysema"
+    - "Fibrosis"
+    - "Pleural_Thickening"
+    - "Hernia"
+  critical_findings:
+    - "Pneumothorax"
+    - "Edema"
+    - "Cardiomegaly"
+    - "Pneumonia"
+
+study_parameters:
+  # Risk-controlling prediction & selective classification guarantees
+  epsilon: 0.02          # Maximum allowable error / risk level
+  delta: 0.05            # Failure probability bound (1 - delta confidence)
+  c_min: 0.30            # Minimum acceptable automated triage coverage
+  delta_c: 0.10          # Coverage exploration step size
+  delta_tol: 0.05        # Tolerance margin for empirical risk bounds
+  sigma_max: 0.10        # Maximum allowable epistemic/predictive standard deviation
+  coverage_grid:
+    - 0.5
+    - 0.6
+    - 0.7
+    - 0.8
+
+model:
+  backbone: "densenet121"
+  pretrained: true
+  image_size: 224
+  in_channels: 1
+  num_classes: 14
+
+calibration:
+  method: "temperature_scaling"
+  eval_ece_bins: 15
+
+rules:
+  enable_symbolic_audit: true
+  critical_escalation_threshold: 0.35
+  defer_on_high_uncertainty: true
+
+api:
+  host: "127.0.0.1"
+  port: 8000
+  reload: false

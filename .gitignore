@@ -1,4 +1,47 @@
-node_modules/
-.env
-.DS_Store
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Cpython / Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Secrets & Environment variables
+.env*
+*.pem
+*.key
+
+# Data & Model Weights (Medical Images, Checkpoints, Embeddings)
+data/raw/
+data/processed/
+artifacts/*
+!artifacts/.gitkeep
+*.pth
+*.pt
+*.onnx
+*.npy
+*.npz
+*.h5
+*.pkl
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.next/
+frontend/build/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
