@@ -1,0 +1,17 @@
+cat << 'EOF' > requirements.txt
+torch
+torchvision
+timm
+numpy
+pandas
+scipy
+pillow
+pyyaml
+fastapi
+uvicorn
+python-multipart
+httpx
+pytest
+ruff
+mypy
+EOF
