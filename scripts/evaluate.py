@@ -95,6 +95,12 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "cuda", "cpu"],
         help="Target execution hardware.",
     )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=0,
+        help="Number of DataLoader worker processes (default 0 for local CPU safety; e.g. 4 on Kaggle GPU).",
+    )
     return parser.parse_args()
 
 
@@ -112,10 +118,14 @@ def main() -> None:
     else:
         device = torch.device(args.device)
 
-    print("=" * 72)
-    print("NEURO-SYMBOLIC CHEST X-RAY TRIAGE: DELIVERABLE D6 BENCHMARK ENGINE")
-    print(f"Device: {device} | Model: {cfg.model.backbone} | Epsilon: {cfg.study_parameters.epsilon} | Delta: {cfg.study_parameters.delta}")
-    print("=" * 72)
+    print("=" * 72, flush=True)
+    print("NEURO-SYMBOLIC CHEST X-RAY TRIAGE: DELIVERABLE D6 BENCHMARK ENGINE", flush=True)
+    print(
+        f"Device: {device} | Model: {cfg.model.backbone} | Workers: {args.num_workers} | "
+        f"Epsilon: {cfg.study_parameters.epsilon} | Delta: {cfg.study_parameters.delta}",
+        flush=True,
+    )
+    print("=" * 72, flush=True)
 
     # 2. Input validation and SHA-256 fingerprinting
     ckpt_path = Path(args.checkpoint)
@@ -147,10 +157,10 @@ def main() -> None:
     rules, rules_hash = load_rule_registry(rules_path, frozenset(NIH_CHESTXRAY14_LABELS))
     manifest_hash = compute_file_sha256(manifest_path) if manifest_path.exists() else "N/A"
 
-    print(f"[Inputs] Checkpoint SHA-256 : {ckpt_hash[:16]}...")
-    print(f"[Inputs] Calibrator SHA-256 : {calib_hash[:16]}...")
-    print(f"[Inputs] Rule Registry      : {len(rules)} rules ({rules_hash[:16]}...)")
-    print(f"[Inputs] Dataset Manifest   : {manifest_path.name} ({manifest_hash[:16]}...)")
+    print(f"[Inputs] Checkpoint SHA-256 : {ckpt_hash[:16]}...", flush=True)
+    print(f"[Inputs] Calibrator SHA-256 : {calib_hash[:16]}...", flush=True)
+    print(f"[Inputs] Rule Registry      : {len(rules)} rules ({rules_hash[:16]}...)", flush=True)
+    print(f"[Inputs] Dataset Manifest   : {manifest_path.name} ({manifest_hash[:16]}...)", flush=True)
 
     # 3. Instantiate model and calibrator
     model = TriageNet(
@@ -169,8 +179,11 @@ def main() -> None:
     calibrator = StudyCalibrator.load(calib_path)
     eval_transform = build_transforms(cfg.model.image_size, is_train=False)
 
+    pin_memory = device.type == "cuda"
+    persistent_workers = args.num_workers > 0
+
     # 4. Phase 1: Calibrate thresholds on calibration split
-    print("\n--- Phase 1: Risk Threshold Calibration ---")
+    print("\n--- Phase 1: Risk Threshold Calibration ---", flush=True)
     calib_ds = NIHChestXrayDataset(
         manifest_path=manifest_path,
         images_dir=images_dir,
@@ -179,7 +192,14 @@ def main() -> None:
         transform=eval_transform,
         only_existing=True,
     )
-    calib_loader = DataLoader(calib_ds, batch_size=args.batch_size, shuffle=False)
+    calib_loader = DataLoader(
+        calib_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+    )
 
     calib_logits_list: list[np.ndarray] = []
     calib_y_list: list[np.ndarray] = []
@@ -189,7 +209,7 @@ def main() -> None:
         for b_idx, batch in enumerate(calib_loader):
             if args.max_batches is not None and b_idx >= args.max_batches:
                 break
-            images = batch["image"].to(device)
+            images = batch["image"].to(device, non_blocking=pin_memory)
             out = model(images, inference_only=True)
             calib_logits_list.append(out["cls_logits"].cpu().numpy())
             calib_y_list.append(batch["y_study"].cpu().numpy())
@@ -219,11 +239,17 @@ def main() -> None:
     applied_tau_prob = tau_prob if tau_prob > 0.0 else 0.25
     applied_tau_ltt = tau_ltt if tau_ltt > 0.0 else applied_tau_prob
 
-    print(f"Calibrated tau_prob (Clopper-Pearson) : {tau_prob:.4f} (applied: {applied_tau_prob:.4f})")
-    print(f"Calibrated tau_ltt  (Cluster LTT)     : {tau_ltt:.4f} (applied: {applied_tau_ltt:.4f})")
+    print(
+        f"Calibrated tau_prob (Clopper-Pearson) : {tau_prob:.4f} (applied: {applied_tau_prob:.4f})",
+        flush=True,
+    )
+    print(
+        f"Calibrated tau_ltt  (Cluster LTT)     : {tau_ltt:.4f} (applied: {applied_tau_ltt:.4f})",
+        flush=True,
+    )
 
     # 5. Phase 2: Test Split Evaluation
-    print("\n--- Phase 2: Test Split Policy Benchmarking ---")
+    print("\n--- Phase 2: Test Split Policy Benchmarking ---", flush=True)
     test_ds = NIHChestXrayDataset(
         manifest_path=manifest_path,
         images_dir=images_dir,
@@ -232,7 +258,14 @@ def main() -> None:
         transform=eval_transform,
         only_existing=True,
     )
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+    )
 
     test_logits_list: list[np.ndarray] = []
     test_struct_list: list[np.ndarray] = []
@@ -243,7 +276,7 @@ def main() -> None:
         for b_idx, batch in enumerate(test_loader):
             if args.max_batches is not None and b_idx >= args.max_batches:
                 break
-            images = batch["image"].to(device)
+            images = batch["image"].to(device, non_blocking=pin_memory)
             out = model(images, inference_only=True)
             test_logits_list.append(out["cls_logits"].cpu().numpy())
             test_struct_list.append(out["struct_logits"].cpu().numpy())
@@ -277,7 +310,7 @@ def main() -> None:
     )
 
     # 6. Phase 3: Paired Patient Bootstrap Difference (pi_ns vs pi_prob)
-    print("\n--- Phase 3: Paired Patient Cluster Bootstrap ---")
+    print("\n--- Phase 3: Paired Patient Cluster Bootstrap ---", flush=True)
     auto_prob = policy_prob(test_p_study, tau=applied_tau_prob)
     auto_ns, _ = policy_neuro_symbolic(
         test_p_study, discretized_findings, rules, tau_score=applied_tau_prob
@@ -292,15 +325,19 @@ def main() -> None:
     )
     print(
         f"Delta FOR (pi_ns - pi_prob): {bootstrap_diff['point_diff']:+.4f} "
-        f"[95% CI: {bootstrap_diff['ci_low']:+.4f}, {bootstrap_diff['ci_high']:+.4f}]"
+        f"[95% CI: {bootstrap_diff['ci_low']:+.4f}, {bootstrap_diff['ci_high']:+.4f}]",
+        flush=True,
     )
 
     # 7. Phase 4: Single-Study CPU Latency Profiling
-    print("\n--- Phase 4: Single-Study CPU Latency Profiling ---")
+    print("\n--- Phase 4: Single-Study CPU Latency Profiling ---", flush=True)
     latency_stats = benchmark_cpu_latency(
         model, image_size=cfg.model.image_size, n_warmup=2, n_runs=10
     )
-    print(f"Median Forward Pass: {latency_stats['median_ms']:.2f} ms | p95: {latency_stats['p95_ms']:.2f} ms")
+    print(
+        f"Median Forward Pass: {latency_stats['median_ms']:.2f} ms | p95: {latency_stats['p95_ms']:.2f} ms",
+        flush=True,
+    )
 
     # 8. Assemble Deliverable D6 Table & Write Artifacts
     output_dir = Path(args.output_dir)

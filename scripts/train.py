@@ -7,6 +7,7 @@ and full Kaggle/cloud GPU acceleration without code modification.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import time
 from pathlib import Path
@@ -95,6 +96,17 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "cuda", "cpu"],
         help="Hardware execution device target.",
     )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=0,
+        help="Number of DataLoader worker processes (default 0 for local CPU safety; e.g. 4 on Kaggle GPU).",
+    )
+    parser.add_argument(
+        "--amp",
+        action="store_true",
+        help="Enable CUDA FP16 Automatic Mixed Precision (autocast + GradScaler) when running on CUDA.",
+    )
     return parser.parse_args()
 
 
@@ -112,11 +124,18 @@ def main() -> None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(args.device)
-    print(f"[CXR Triage] Target Device: {device}")
+    use_amp = bool(args.amp and device.type == "cuda")
+    print(
+        f"[CXR Triage] Target Device: {device} | AMP: {use_amp} | Workers: {args.num_workers}",
+        flush=True,
+    )
 
     # 3. Resolve backbone
     backbone_name = args.backbone if args.backbone is not None else cfg.model.backbone
-    print(f"[CXR Triage] Backbone: {backbone_name} (pretrained={not args.no_pretrained})")
+    print(
+        f"[CXR Triage] Backbone: {backbone_name} (pretrained={not args.no_pretrained})",
+        flush=True,
+    )
 
     # 4. Construct dataset and transforms
     if args.manifest is not None:
@@ -162,20 +181,30 @@ def main() -> None:
 
     print(
         f"[CXR Triage] Dataset Loaded: Train={len(train_dataset)} samples, "
-        f"Calibration={len(calib_dataset)} samples"
+        f"Calibration={len(calib_dataset)} samples",
+        flush=True,
     )
+
+    pin_memory = device.type == "cuda"
+    persistent_workers = args.num_workers > 0
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         drop_last=False,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
     )
     calib_loader = DataLoader(
         calib_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         drop_last=False,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
     )
 
     # 5. Instantiate model, loss, and optimizer
@@ -190,7 +219,8 @@ def main() -> None:
     param_counts = model.count_parameters()
     print(
         f"[CXR Triage] Model Parameters: Total={param_counts['total']:,}, "
-        f"Inference={param_counts['inference_only']:,}"
+        f"Inference={param_counts['inference_only']:,}",
+        flush=True,
     )
 
     criterion = TriageCompositeLoss(
@@ -198,39 +228,88 @@ def main() -> None:
         lambda_d=0.0,  # Distillation loss active when multimodal teacher is provided
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    scaler = torch.amp.GradScaler("cuda") if use_amp else None
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = output_dir / "checkpoint.pt"
 
     # 6. Training loop
     model.train()
     final_loss = 0.0
+    total_batches = (
+        min(len(train_loader), args.max_batches)
+        if args.max_batches is not None
+        else len(train_loader)
+    )
     for epoch in range(1, args.epochs + 1):
+        epoch_start = time.time()
         running_loss = 0.0
         batches_processed = 0
         for batch_idx, batch in enumerate(train_loader):
             if args.max_batches is not None and batch_idx >= args.max_batches:
                 break
 
-            images = batch["image"].to(device)
-            labels = batch["labels"].to(device)
+            images = batch["image"].to(device, non_blocking=pin_memory)
+            labels = batch["labels"].to(device, non_blocking=pin_memory)
 
             optimizer.zero_grad()
-            outputs = model(images)
-            loss_dict = criterion(
-                cls_logits=outputs["cls_logits"],
-                labels=labels,
-                struct_logits=outputs["struct_logits"],
+            amp_ctx: contextlib.AbstractContextManager[Any] = (
+                torch.amp.autocast(device_type="cuda", dtype=torch.float16)
+                if use_amp
+                else contextlib.nullcontext()
             )
-            loss = loss_dict["loss"]
-            loss.backward()
-            optimizer.step()
+            with amp_ctx:
+                outputs = model(images)
+                loss_dict = criterion(
+                    cls_logits=outputs["cls_logits"],
+                    labels=labels,
+                    struct_logits=outputs["struct_logits"],
+                )
+                loss = loss_dict["loss"]
+
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
 
             running_loss += float(loss.item())
             batches_processed += 1
 
+            if batches_processed % 250 == 0:
+                avg_loss = running_loss / batches_processed
+                elapsed = time.time() - epoch_start
+                print(
+                    f"[CXR Triage] Epoch {epoch}/{args.epochs} | "
+                    f"Batch {batches_processed}/{total_batches} | "
+                    f"Loss: {avg_loss:.4f} | Elapsed: {elapsed:.1f}s",
+                    flush=True,
+                )
+
         final_loss = running_loss / max(1, batches_processed)
-        print(f"[CXR Triage] Epoch {epoch}/{args.epochs} - Loss: {final_loss:.4f} ({batches_processed} batches)")
+        epoch_elapsed = time.time() - epoch_start
+        print(
+            f"[CXR Triage] Epoch {epoch}/{args.epochs} - Loss: {final_loss:.4f} "
+            f"({batches_processed} batches, {epoch_elapsed:.1f}s)",
+            flush=True,
+        )
+
+        # Persist checkpoint at the end of every epoch to guard against session interruption
+        torch.save(
+            {
+                "epoch": epoch,
+                "backbone": backbone_name,
+                "model_state_dict": model.state_dict(),
+                "param_counts": param_counts,
+            },
+            checkpoint_path,
+        )
 
     # 7. Calibration phase
-    print("[CXR Triage] Fitting post-hoc StudyCalibrator on calibration split...")
+    print("[CXR Triage] Fitting post-hoc StudyCalibrator on calibration split...", flush=True)
     model.eval()
     calib_logits_list: list[np.ndarray] = []
     calib_labels_list: list[np.ndarray] = []
@@ -240,7 +319,7 @@ def main() -> None:
         for batch_idx, batch in enumerate(calib_loader):
             if args.max_batches is not None and batch_idx >= args.max_batches:
                 break
-            images = batch["image"].to(device)
+            images = batch["image"].to(device, non_blocking=pin_memory)
             outputs = model(images, inference_only=True)
             calib_logits_list.append(outputs["cls_logits"].cpu().numpy())
             calib_labels_list.append(batch["labels"].cpu().numpy())
@@ -256,11 +335,7 @@ def main() -> None:
         calibrator = StudyCalibrator(temperature=1.0, study_scale=1.0, study_bias=0.0)
 
     # 8. Save artifacts
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Save checkpoint
-    checkpoint_path = output_dir / "checkpoint.pt"
+    # Save final checkpoint
     torch.save(
         {
             "epoch": args.epochs,
@@ -286,6 +361,8 @@ def main() -> None:
         "batch_size": args.batch_size,
         "learning_rate": args.lr,
         "max_batches": args.max_batches,
+        "num_workers": args.num_workers,
+        "amp": use_amp,
         "final_train_loss": float(final_loss),
         "parameter_counts": param_counts,
         "calibration": {
@@ -305,7 +382,7 @@ def main() -> None:
 
     summary_path = output_dir / "run_summary.json"
     summary_path.write_text(json.dumps(run_summary, indent=2), encoding="utf-8")
-    print(f"[CXR Triage] Saved artifacts to {output_dir} in {total_duration:.2f}s.")
+    print(f"[CXR Triage] Saved artifacts to {output_dir} in {total_duration:.2f}s.", flush=True)
 
 
 if __name__ == "__main__":
